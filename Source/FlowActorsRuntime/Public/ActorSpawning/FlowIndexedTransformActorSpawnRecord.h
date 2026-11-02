@@ -26,6 +26,7 @@ protected:
 	virtual FTransform GetDesiredSpawnTransform() const override;
 #endif
 
+public:
 #if WITH_EDITOR
 	virtual EDataValidationResult IsDataValid(class FDataValidationContext& Context) const override;
 #endif

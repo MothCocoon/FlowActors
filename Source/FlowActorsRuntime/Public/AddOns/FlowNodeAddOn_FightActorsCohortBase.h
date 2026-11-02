@@ -52,6 +52,7 @@ protected:
 	virtual int32 GetInitialActorCount() const;
 #endif
 
+public:
 #if WITH_EDITOR
 	virtual FText K2_GetNodeTitle_Implementation() const override;
 #endif

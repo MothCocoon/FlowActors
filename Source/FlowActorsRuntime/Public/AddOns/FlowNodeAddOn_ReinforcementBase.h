@@ -61,11 +61,11 @@ public:
 	static const FName INPIN_EnableAutoReinforce;
 	static const FName INPIN_DisableAutoReinforce;
 
-protected:
 #if WITH_EDITOR
 	virtual EDataValidationResult IsDataValid(class FDataValidationContext& Context) const override;
 #endif
 
+protected:
 #if WITH_SERVER_CODE
 	IFlowFightActorsReinforcementHost* GetFightHost() const;
 	void SetReinforcementState(EFlowFightReinforcementState NextState);

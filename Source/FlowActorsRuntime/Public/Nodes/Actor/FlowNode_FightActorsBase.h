@@ -102,7 +102,10 @@ protected:
 	virtual void UpdateNodeConfigText_Implementation() override;
 
 #if WITH_EDITOR
+public:
 	virtual bool SupportsContextPins() const override { return true; }
+
+protected:
 	virtual EDataValidationResult ValidateNode() override;
 #endif
 };

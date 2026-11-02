@@ -44,6 +44,7 @@ protected:
 		const TArray<UFlowNodeAddOn*>& AdditionalAddOnsToAssumeAreChildren) const override;
 	virtual void UpdateNodeConfigText_Implementation() override;
 
+public:
 #if WITH_EDITOR
 	virtual EDataValidationResult IsDataValid(class FDataValidationContext& Context) const override;
 #endif
