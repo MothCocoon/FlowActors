@@ -91,16 +91,20 @@ class FLOWACTORSRUNTIME_API UFlowNode_TeleportActorsV2 : public UFlowNode
 public:
 	UFlowNode_TeleportActorsV2();
 
+protected:
 	virtual EFlowAddOnAcceptResult AcceptFlowNodeAddOnChild_Implementation(
 		const UFlowNodeAddOn* AddOnTemplate,
 		const TArray<UFlowNodeAddOn*>& AdditionalAddOnsToAssumeAreChildren) const override;
 
 #if WITH_EDITOR
 	virtual void UpdateNodeConfigText_Implementation() override;
+
+public:
 	virtual EDataValidationResult IsDataValid(FDataValidationContext& Context) const override;
 	virtual const FFlowAgentDoc& GetAgentDoc() const override;
 #endif
 
+public:
 	virtual void ExecuteInput(const FName& PinName) override;
 	virtual void DeinitializeInstance() override;
 
