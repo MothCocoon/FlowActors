@@ -1,5 +1,4 @@
 // Copyright https://github.com/MothCocoon/FlowGraph/graphs/contributors
-
 #include "Nodes/Actor/FlowNode_FightActors.h"
 
 #include "ActorSpawning/FlowActorSpawnRecord.h"
