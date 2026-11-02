@@ -144,6 +144,90 @@ int32 UFlowActorSpawningSubsystem::SubmitSpawnPass(
 	return NumQueued;
 }
 
+bool UFlowActorSpawningSubsystem::HasOutstandingSpawns(const UObject* Owner) const
+{
+	if (!IsValid(Owner))
+	{
+		return false;
+	}
+
+	for (const UFlowActorSpawnRecord* Active : {ActiveSpawnRecord.Get(), ProcessingImmediateRecord.Get()})
+	{
+		if (IsValid(Active) && Active->GetOuter() == Owner && Active->IsQueuedOrActivelyAttemptingtoSpawn())
+		{
+			return true;
+		}
+	}
+
+	const auto HasPendingOwnerWork = [Owner](const TArray<FFlowActorSpawnQueueEntry>& Entries)
+	{
+		for (const FFlowActorSpawnQueueEntry& Entry : Entries)
+		{
+			const UFlowActorSpawnRecord* Record = Entry.Record.Get();
+			if (IsValid(Record) && Record->GetOuter() == Owner
+				&& Record->GetConfigurationGeneration() == Entry.ConfigurationGeneration
+				&& Record->IsQueuedOrActivelyAttemptingtoSpawn())
+			{
+				return true;
+			}
+		}
+		return false;
+	};
+
+	return HasPendingOwnerWork(PendingSpawnRecords)
+		|| HasPendingOwnerWork(ImmediateSpawnRecords)
+		|| HasPendingOwnerWork(ParkedImmediateSpawnRecords);
+}
+
+void UFlowActorSpawningSubsystem::CancelSpawnsForOwner(const UObject* Owner)
+{
+	if (Owner == nullptr || CancellingOwner == Owner)
+	{
+		return;
+	}
+
+	TGuardValue<const UObject*> Guard(CancellingOwner, Owner);
+	UFlowActorSpawnRecord* Current = ProcessingImmediateRecord.Get();
+	if (IsValid(Current) && Current->GetOuter() == Owner && Current->IsQueuedOrActivelyAttemptingtoSpawn())
+	{
+		Current->CleanupRuntime();
+	}
+
+	TArray<FFlowActorSpawnQueueEntry> ToCancel;
+	ExtractRecordsForOwner(PendingSpawnRecords, Owner, ToCancel);
+	ExtractRecordsForOwner(ImmediateSpawnRecords, Owner, ToCancel);
+	ExtractRecordsForOwner(ParkedImmediateSpawnRecords, Owner, ToCancel);
+	UFlowActorSpawnRecord* Active = ActiveSpawnRecord.Get();
+	if (IsValid(Active) && Active->GetOuter() == Owner)
+	{
+		ActiveSpawnRecord = nullptr;
+		if (Active->IsQueuedOrActivelyAttemptingtoSpawn())
+		{
+			ToCancel.Emplace(*Active);
+		}
+	}
+
+	for (const FFlowActorSpawnQueueEntry& Entry : ToCancel)
+	{
+		UFlowActorSpawnRecord* Record = Entry.Record.Get();
+		if (IsValid(Record) && Record->GetConfigurationGeneration() == Entry.ConfigurationGeneration
+			&& Record->IsQueuedOrActivelyAttemptingtoSpawn())
+		{
+			Record->CleanupRuntime();
+		}
+	}
+}
+
+void UFlowActorSpawningSubsystem::SetMaxSpawnSuccessesPerTick(int32 InMaxSuccesses)
+{
+	MaxSpawnSuccessesPerTick = FMath::Max(1, InMaxSuccesses);
+}
+
+void UFlowActorSpawningSubsystem::SetMaxSpawnAttemptsPerFlush(int32 InMaxAttempts)
+{
+	MaxSpawnAttemptsPerFlush = FMath::Max(1, InMaxAttempts);
+}
+
 bool UFlowActorSpawningSubsystem::QueueRecord(UFlowActorSpawnRecord& Record, EFlowActorSpawnQueueMode Mode)
 {
 	FLOW_ASSERT_ENUM_MAX(EFlowActorSpawnQueueMode, 2);
@@ -202,109 +286,6 @@ void UFlowActorSpawningSubsystem::FlushImmediateSpawnRecords()
 	}
 }
 
-bool UFlowActorSpawningSubsystem::HasOutstandingSpawns(const UObject* Owner) const
-{
-	if (!IsValid(Owner))
-	{
-		return false;
-	}
-
-	for (const UFlowActorSpawnRecord* Active : {ActiveSpawnRecord.Get(), ProcessingImmediateRecord.Get()})
-	{
-		if (IsValid(Active) && Active->GetOuter() == Owner && Active->IsQueuedOrActivelyAttemptingtoSpawn())
-		{
-			return true;
-		}
-	}
-
-	const auto HasPendingOwnerWork = [Owner](const TArray<FFlowActorSpawnQueueEntry>& Entries)
-	{
-		for (const FFlowActorSpawnQueueEntry& Entry : Entries)
-		{
-			const UFlowActorSpawnRecord* Record = Entry.Record.Get();
-			if (IsValid(Record) && Record->GetOuter() == Owner
-				&& Record->GetConfigurationGeneration() == Entry.ConfigurationGeneration
-				&& Record->IsQueuedOrActivelyAttemptingtoSpawn())
-			{
-				return true;
-			}
-		}
-		return false;
-	};
-
-	return HasPendingOwnerWork(PendingSpawnRecords)
-		|| HasPendingOwnerWork(ImmediateSpawnRecords)
-		|| HasPendingOwnerWork(ParkedImmediateSpawnRecords);
-}
-
-void UFlowActorSpawningSubsystem::ExtractRecordsForOwner(
-	TArray<FFlowActorSpawnQueueEntry>& Records,
-	const UObject* Owner,
-	TArray<FFlowActorSpawnQueueEntry>& OutRecords)
-{
-	for (int32 Index = 0; Index < Records.Num();)
-	{
-		const FFlowActorSpawnQueueEntry& Entry = Records[Index];
-		if (!IsValid(Entry.Record) || Entry.Record->GetOuter() != Owner)
-		{
-			++Index;
-			continue;
-		}
-
-		OutRecords.Add(Entry);
-		Records.RemoveAt(Index);
-	}
-}
-
-void UFlowActorSpawningSubsystem::CancelSpawnsForOwner(const UObject* Owner)
-{
-	if (Owner == nullptr || CancellingOwner == Owner)
-	{
-		return;
-	}
-
-	TGuardValue<const UObject*> Guard(CancellingOwner, Owner);
-	UFlowActorSpawnRecord* Current = ProcessingImmediateRecord.Get();
-	if (IsValid(Current) && Current->GetOuter() == Owner && Current->IsQueuedOrActivelyAttemptingtoSpawn())
-	{
-		Current->CleanupRuntime();
-	}
-
-	TArray<FFlowActorSpawnQueueEntry> ToCancel;
-	ExtractRecordsForOwner(PendingSpawnRecords, Owner, ToCancel);
-	ExtractRecordsForOwner(ImmediateSpawnRecords, Owner, ToCancel);
-	ExtractRecordsForOwner(ParkedImmediateSpawnRecords, Owner, ToCancel);
-	UFlowActorSpawnRecord* Active = ActiveSpawnRecord.Get();
-	if (IsValid(Active) && Active->GetOuter() == Owner)
-	{
-		ActiveSpawnRecord = nullptr;
-		if (Active->IsQueuedOrActivelyAttemptingtoSpawn())
-		{
-			ToCancel.Emplace(*Active);
-		}
-	}
-
-	for (const FFlowActorSpawnQueueEntry& Entry : ToCancel)
-	{
-		UFlowActorSpawnRecord* Record = Entry.Record.Get();
-		if (IsValid(Record) && Record->GetConfigurationGeneration() == Entry.ConfigurationGeneration
-			&& Record->IsQueuedOrActivelyAttemptingtoSpawn())
-		{
-			Record->CleanupRuntime();
-		}
-	}
-}
-
-void UFlowActorSpawningSubsystem::SetMaxSpawnSuccessesPerTick(int32 InMaxSuccesses)
-{
-	MaxSpawnSuccessesPerTick = FMath::Max(1, InMaxSuccesses);
-}
-
-void UFlowActorSpawningSubsystem::SetMaxSpawnAttemptsPerFlush(int32 InMaxAttempts)
-{
-	MaxSpawnAttemptsPerFlush = FMath::Max(1, InMaxAttempts);
-}
-
 void UFlowActorSpawningSubsystem::CancelOutstandingSpawnRecords()
 {
 	UFlowActorSpawnRecord* Current = ProcessingImmediateRecord.Get();
@@ -338,6 +319,25 @@ void UFlowActorSpawningSubsystem::CancelOutstandingSpawnRecords()
 	if (IsValid(Active) && Active->IsQueuedOrActivelyAttemptingtoSpawn())
 	{
 		Active->CleanupRuntime();
+	}
+}
+
+void UFlowActorSpawningSubsystem::ExtractRecordsForOwner(
+	TArray<FFlowActorSpawnQueueEntry>& Records,
+	const UObject* Owner,
+	TArray<FFlowActorSpawnQueueEntry>& OutRecords)
+{
+	for (int32 Index = 0; Index < Records.Num();)
+	{
+		const FFlowActorSpawnQueueEntry& Entry = Records[Index];
+		if (!IsValid(Entry.Record) || Entry.Record->GetOuter() != Owner)
+		{
+			++Index;
+			continue;
+		}
+
+		OutRecords.Add(Entry);
+		Records.RemoveAt(Index);
 	}
 }
 

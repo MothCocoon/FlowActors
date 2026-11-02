@@ -96,6 +96,68 @@ bool UFlowActorSpawnRecord::IsSpawnedActorAlive() const
 	return IsValid(GetOwnedActor());
 }
 
+bool UFlowActorSpawnRecord::AdvanceCurrentState(EFlowActorSpawnRecordState& OutNextState)
+{
+	FLOW_ASSERT_ENUM_MAX(EFlowActorSpawnRecordState, 10);
+	FLOW_ASSERT_ENUM_VALUE(EFlowActorSpawnRecordState::WaitingForSpawnLocation, 3);
+	FLOW_ASSERT_ENUM_VALUE(EFlowActorSpawnRecordState::TrySpawnActor, 4);
+	FLOW_ASSERT_ENUM_VALUE(EFlowActorSpawnRecordState::SuccessfulSpawn, 7);
+
+	switch (RecordState)
+	{
+	case EFlowActorSpawnRecordState::PreSpawnConfiguration:
+	case EFlowActorSpawnRecordState::WaitingForSpawnLocation:
+	case EFlowActorSpawnRecordState::PostSpawnConfigureActor:
+		{
+			OutNextState = static_cast<EFlowActorSpawnRecordState>(FlowEnum::ToInt(RecordState) + 1);
+			return true;
+		}
+
+	case EFlowActorSpawnRecordState::TrySpawnActor:
+		{
+			ResolvedSpawnTransform = GetDesiredSpawnTransform();
+			if (AcquireActor())
+			{
+				OutNextState = EFlowActorSpawnRecordState::FinishSpawnActor;
+			}
+			else
+			{
+				OutNextState = EFlowActorSpawnRecordState::FailedSpawn;
+			}
+			return true;
+		}
+
+	case EFlowActorSpawnRecordState::FinishSpawnActor:
+		{
+			if (FinishAcquiredActor())
+			{
+				OutNextState = EFlowActorSpawnRecordState::PostSpawnConfigureActor;
+			}
+			else
+			{
+				OutNextState = EFlowActorSpawnRecordState::FailedSpawn;
+			}
+			return true;
+		}
+
+	default:
+		return false;
+	}
+}
+
+FTransform UFlowActorSpawnRecord::GetDesiredSpawnTransform() const
+{
+	if (const IFlowActorSpawnRecordOwner* Owner = GetRecordOwner())
+	{
+		if (const AActor* ActorOwner = Owner->TryGetActorOwner(); IsValid(ActorOwner))
+		{
+			return ActorOwner->GetActorTransform();
+		}
+	}
+
+	return FTransform::Identity;
+}
+
 void UFlowActorSpawnRecord::CompleteSpawnLocation(bool bSucceeded)
 {
 	FLOW_ASSERT_ENUM_MAX(EFlowActorSpawnRecordState, 10);
@@ -195,68 +257,6 @@ void UFlowActorSpawnRecord::UpdateRecordState()
 			SetRecordState(NextState);
 		}
 	}
-}
-
-bool UFlowActorSpawnRecord::AdvanceCurrentState(EFlowActorSpawnRecordState& OutNextState)
-{
-	FLOW_ASSERT_ENUM_MAX(EFlowActorSpawnRecordState, 10);
-	FLOW_ASSERT_ENUM_VALUE(EFlowActorSpawnRecordState::WaitingForSpawnLocation, 3);
-	FLOW_ASSERT_ENUM_VALUE(EFlowActorSpawnRecordState::TrySpawnActor, 4);
-	FLOW_ASSERT_ENUM_VALUE(EFlowActorSpawnRecordState::SuccessfulSpawn, 7);
-
-	switch (RecordState)
-	{
-	case EFlowActorSpawnRecordState::PreSpawnConfiguration:
-	case EFlowActorSpawnRecordState::WaitingForSpawnLocation:
-	case EFlowActorSpawnRecordState::PostSpawnConfigureActor:
-		{
-			OutNextState = static_cast<EFlowActorSpawnRecordState>(FlowEnum::ToInt(RecordState) + 1);
-			return true;
-		}
-
-	case EFlowActorSpawnRecordState::TrySpawnActor:
-		{
-			ResolvedSpawnTransform = GetDesiredSpawnTransform();
-			if (AcquireActor())
-			{
-				OutNextState = EFlowActorSpawnRecordState::FinishSpawnActor;
-			}
-			else
-			{
-				OutNextState = EFlowActorSpawnRecordState::FailedSpawn;
-			}
-			return true;
-		}
-
-	case EFlowActorSpawnRecordState::FinishSpawnActor:
-		{
-			if (FinishAcquiredActor())
-			{
-				OutNextState = EFlowActorSpawnRecordState::PostSpawnConfigureActor;
-			}
-			else
-			{
-				OutNextState = EFlowActorSpawnRecordState::FailedSpawn;
-			}
-			return true;
-		}
-
-	default:
-		return false;
-	}
-}
-
-FTransform UFlowActorSpawnRecord::GetDesiredSpawnTransform() const
-{
-	if (const IFlowActorSpawnRecordOwner* Owner = GetRecordOwner())
-	{
-		if (const AActor* ActorOwner = Owner->TryGetActorOwner(); IsValid(ActorOwner))
-		{
-			return ActorOwner->GetActorTransform();
-		}
-	}
-
-	return FTransform::Identity;
 }
 
 IFlowActorSpawnRecordOwner* UFlowActorSpawnRecord::GetRecordOwner() const

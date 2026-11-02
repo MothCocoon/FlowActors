@@ -141,7 +141,23 @@ void UFlowNodeAddOn_ReinforcementBase::AbortReinforcement(bool bDisableAutoReinf
 		Host->ReevaluateFightCompletion();
 	}
 }
+#endif
 
+#if WITH_EDITOR
+EDataValidationResult UFlowNodeAddOn_ReinforcementBase::IsDataValid(FDataValidationContext& Context) const
+{
+	const EDataValidationResult ParentResult = Super::IsDataValid(Context);
+	if (Params.AutoReinforcementPercentAlive > 100)
+	{
+		Context.AddError(FText::FromString(TEXT("Auto-Reinforcement Percent Alive must be between 0 and 100.")));
+		return EDataValidationResult::Invalid;
+	}
+
+	return ParentResult;
+}
+#endif
+
+#if WITH_SERVER_CODE
 IFlowFightActorsReinforcementHost* UFlowNodeAddOn_ReinforcementBase::GetFightHost() const
 {
 	return Cast<IFlowFightActorsReinforcementHost>(GetFlowNode());
@@ -323,17 +339,3 @@ void UFlowNodeAddOn_ReinforcementBase::OnScheduledReinforcementTimerExpired()
 	}
 #endif
 }
-
-#if WITH_EDITOR
-EDataValidationResult UFlowNodeAddOn_ReinforcementBase::IsDataValid(FDataValidationContext& Context) const
-{
-	const EDataValidationResult ParentResult = Super::IsDataValid(Context);
-	if (Params.AutoReinforcementPercentAlive > 100)
-	{
-		Context.AddError(FText::FromString(TEXT("Auto-Reinforcement Percent Alive must be between 0 and 100.")));
-		return EDataValidationResult::Invalid;
-	}
-
-	return ParentResult;
-}
-#endif

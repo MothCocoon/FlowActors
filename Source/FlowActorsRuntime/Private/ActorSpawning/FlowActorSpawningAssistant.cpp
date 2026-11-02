@@ -16,110 +16,6 @@
 #include UE_INLINE_GENERATED_CPP_BY_NAME(FlowActorSpawningAssistant)
 
 #if WITH_SERVER_CODE
-void FFlowActorSpawningAssistant::StartPass(FFlowActorSpawningPassContext& Context)
-{
-	if (FFlowActorSpawnSelector* Selector = Context.Config.Selector.GetMutablePtr<FFlowActorSpawnSelector>())
-	{
-		Selector->StartSpawningPass();
-	}
-}
-
-int32 FFlowActorSpawningAssistant::GetNumToSpawn(FFlowActorSpawningPassContext& Context)
-{
-	const FFlowActorSpawnSelector* Selector = Context.Config.Selector.GetPtr<FFlowActorSpawnSelector>();
-	return Selector ? Selector->GetNumToSpawn() : INDEX_NONE;
-}
-
-int32 FFlowActorSpawningAssistant::SelectRecordIndex(FFlowActorSpawningPassContext& Context, int32 SourceIndex,
-	int32 NumToSpawn)
-{
-	const int32 ChosenIndex = ChooseRecordIndex(SourceIndex, NumToSpawn, Context.Config.Method, Context.Config.Records);
-	return ChosenIndex == INDEX_NONE ? INDEX_NONE : FMath::Min(ChosenIndex, Context.Config.Records.Num());
-}
-
-TSubclassOf<AActor> FFlowActorSpawningAssistant::ChooseActorClass(FFlowActorSpawningPassContext& Context,
-	int32 RecordIndex)
-{
-	const FFlowActorSpawnSelector* Selector = Context.Config.Selector.GetPtr<FFlowActorSpawnSelector>();
-	return Selector ? Selector->ChooseActorClassToSpawn(RecordIndex) : nullptr;
-}
-
-UFlowActorSpawnRecord* FFlowActorSpawningAssistant::PrepareRecord(FFlowActorSpawningPassContext& Context,
-	int32 RecordIndex, TSubclassOf<AActor> ActorClass)
-{
-	const FFlowActorSpawningPassConfig& Config = Context.Config;
-
-	UFlowActorSpawnRecord* ExistingRecord = nullptr;
-	if (Config.Records.IsValidIndex(RecordIndex))
-	{
-		ExistingRecord = Config.Records[RecordIndex].Get();
-	}
-
-	if (IsValid(ExistingRecord))
-	{
-		if (!ExistingRecord->Configure(ActorClass, RecordIndex, true))
-		{
-			return nullptr;
-		}
-
-		++Context.NumPrepared;
-		return ExistingRecord;
-	}
-
-	UClass* SpawnClass = Config.RecordTemplate.GetClass();
-	const FName RecordName = MakeUniqueObjectName(&Config.Owner, SpawnClass, Config.RecordTemplate.GetFName());
-
-	UFlowActorSpawnRecord* Record = NewObject<UFlowActorSpawnRecord>(
-		&Config.Owner, SpawnClass, RecordName, RF_NoFlags, &Config.RecordTemplate);
-
-	if (IsValid(Record) && Record->Configure(ActorClass, RecordIndex))
-	{
-		if (Config.Records.IsValidIndex(RecordIndex))
-		{
-			Config.Records[RecordIndex] = Record;
-		}
-		else
-		{
-			Config.Records.Add(Record);
-		}
-
-		Context.NewRecords.Add(Record);
-		++Context.NumPrepared;
-
-		return Record;
-	}
-	return nullptr;
-}
-
-void FFlowActorSpawningAssistant::OnRejectedRecord(FFlowActorSpawningPassContext& Context,
-	UFlowActorSpawnRecord& Record)
-{
-	if (Context.NewRecords.Contains(&Record))
-	{
-		for (TObjectPtr<UFlowActorSpawnRecord>& Entry : Context.Config.Records)
-		{
-			if (Entry.Get() == &Record)
-			{
-				Entry = nullptr;
-				break;
-			}
-		}
-
-		while (!Context.Config.Records.IsEmpty() && !IsValid(Context.Config.Records.Last()))
-		{
-			Context.Config.Records.Pop();
-		}
-	}
-}
-
-void FFlowActorSpawningAssistant::FinishPass(FFlowActorSpawningPassContext& Context)
-{
-	if (FFlowActorSpawnSelector* Selector = Context.Config.Selector.GetMutablePtr<FFlowActorSpawnSelector>())
-	{
-		Selector->FinishSpawningPass();
-	}
-}
-
 FFlowActorSpawningPassResult FFlowActorSpawningAssistant::TryExecuteSpawningPass(const FFlowActorSpawningPassConfig& Config)
 {
 	FLOW_ASSERT_ENUM_MAX(EFlowActorSpawningMethod, 3);
@@ -306,5 +202,109 @@ int32 FFlowActorSpawningAssistant::ChooseRecordIndex(int32 SourceIndex, int32 Nu
 	}
 
 	return RecordCount;
+}
+
+void FFlowActorSpawningAssistant::StartPass(FFlowActorSpawningPassContext& Context)
+{
+	if (FFlowActorSpawnSelector* Selector = Context.Config.Selector.GetMutablePtr<FFlowActorSpawnSelector>())
+	{
+		Selector->StartSpawningPass();
+	}
+}
+
+int32 FFlowActorSpawningAssistant::GetNumToSpawn(FFlowActorSpawningPassContext& Context)
+{
+	const FFlowActorSpawnSelector* Selector = Context.Config.Selector.GetPtr<FFlowActorSpawnSelector>();
+	return Selector ? Selector->GetNumToSpawn() : INDEX_NONE;
+}
+
+int32 FFlowActorSpawningAssistant::SelectRecordIndex(FFlowActorSpawningPassContext& Context, int32 SourceIndex,
+	int32 NumToSpawn)
+{
+	const int32 ChosenIndex = ChooseRecordIndex(SourceIndex, NumToSpawn, Context.Config.Method, Context.Config.Records);
+	return ChosenIndex == INDEX_NONE ? INDEX_NONE : FMath::Min(ChosenIndex, Context.Config.Records.Num());
+}
+
+TSubclassOf<AActor> FFlowActorSpawningAssistant::ChooseActorClass(FFlowActorSpawningPassContext& Context,
+	int32 RecordIndex)
+{
+	const FFlowActorSpawnSelector* Selector = Context.Config.Selector.GetPtr<FFlowActorSpawnSelector>();
+	return Selector ? Selector->ChooseActorClassToSpawn(RecordIndex) : nullptr;
+}
+
+UFlowActorSpawnRecord* FFlowActorSpawningAssistant::PrepareRecord(FFlowActorSpawningPassContext& Context,
+	int32 RecordIndex, TSubclassOf<AActor> ActorClass)
+{
+	const FFlowActorSpawningPassConfig& Config = Context.Config;
+
+	UFlowActorSpawnRecord* ExistingRecord = nullptr;
+	if (Config.Records.IsValidIndex(RecordIndex))
+	{
+		ExistingRecord = Config.Records[RecordIndex].Get();
+	}
+
+	if (IsValid(ExistingRecord))
+	{
+		if (!ExistingRecord->Configure(ActorClass, RecordIndex, true))
+		{
+			return nullptr;
+		}
+
+		++Context.NumPrepared;
+		return ExistingRecord;
+	}
+
+	UClass* SpawnClass = Config.RecordTemplate.GetClass();
+	const FName RecordName = MakeUniqueObjectName(&Config.Owner, SpawnClass, Config.RecordTemplate.GetFName());
+
+	UFlowActorSpawnRecord* Record = NewObject<UFlowActorSpawnRecord>(
+		&Config.Owner, SpawnClass, RecordName, RF_NoFlags, &Config.RecordTemplate);
+
+	if (IsValid(Record) && Record->Configure(ActorClass, RecordIndex))
+	{
+		if (Config.Records.IsValidIndex(RecordIndex))
+		{
+			Config.Records[RecordIndex] = Record;
+		}
+		else
+		{
+			Config.Records.Add(Record);
+		}
+
+		Context.NewRecords.Add(Record);
+		++Context.NumPrepared;
+
+		return Record;
+	}
+	return nullptr;
+}
+
+void FFlowActorSpawningAssistant::OnRejectedRecord(FFlowActorSpawningPassContext& Context,
+	UFlowActorSpawnRecord& Record)
+{
+	if (Context.NewRecords.Contains(&Record))
+	{
+		for (TObjectPtr<UFlowActorSpawnRecord>& Entry : Context.Config.Records)
+		{
+			if (Entry.Get() == &Record)
+			{
+				Entry = nullptr;
+				break;
+			}
+		}
+
+		while (!Context.Config.Records.IsEmpty() && !IsValid(Context.Config.Records.Last()))
+		{
+			Context.Config.Records.Pop();
+		}
+	}
+}
+
+void FFlowActorSpawningAssistant::FinishPass(FFlowActorSpawningPassContext& Context)
+{
+	if (FFlowActorSpawnSelector* Selector = Context.Config.Selector.GetMutablePtr<FFlowActorSpawnSelector>())
+	{
+		Selector->FinishSpawningPass();
+	}
 }
 #endif

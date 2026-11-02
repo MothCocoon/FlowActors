@@ -65,6 +65,75 @@ void UFlowNode_FightActorsBase::DeinitializeInstance()
 }
 
 #if WITH_SERVER_CODE
+int32 UFlowNode_FightActorsBase::ExecuteReinforcementPass(EFlowFightActorSpawnMethod Method, bool bShuffleCohorts)
+{
+	FLOW_ASSERT_ENUM_MAX(EFlowFightActorState, 4);
+	if (FightState == EFlowFightActorState::Invalid || FightState == EFlowFightActorState::Complete)
+	{
+		return 0;
+	}
+
+	const int32 NumQueued = ExecuteFightPass(Method, bShuffleCohorts, false);
+	CompleteFightIfSpawnPassFailedOrEmpty(NumQueued, Method, false);
+
+	return NumQueued;
+}
+
+float UFlowNode_FightActorsBase::GetOverallAliveUnitPercent() const
+{
+	return GetFightActorCounts().CalculateAliveAndPendingVsInitialCountUnitPercent();
+}
+
+void UFlowNode_FightActorsBase::ReevaluateFightCompletion()
+{
+	FLOW_ASSERT_ENUM_MAX(EFlowFightActorState, 4);
+	if (FightState != EFlowFightActorState::Executing || bPreparingFightPass || bCleaningUpFight)
+	{
+		return;
+	}
+
+	SetFightState(EFlowFightActorState::CheckCompletion);
+	UpdateFightState();
+}
+
+void UFlowNode_FightActorsBase::NotifyCohortPreSpawn(UFlowActorSpawnRecord& Record)
+{
+	HandlePreSpawnConfiguration(Record);
+}
+
+void UFlowNode_FightActorsBase::NotifyCohortPreFinishSpawn(UFlowActorSpawnRecord& Record)
+{
+	HandlePreFinishSpawnActor(Record);
+}
+
+void UFlowNode_FightActorsBase::NotifyCohortPostSpawn(UFlowActorSpawnRecord& Record)
+{
+	HandlePostSpawnConfiguration(Record);
+	OnCohortActorSpawned(Record);
+}
+
+void UFlowNode_FightActorsBase::NotifyCohortSpawnAttemptFinished(UFlowActorSpawnRecord& Record)
+{
+	HandleFinishedSpawnAttempt(Record);
+}
+
+void UFlowNode_FightActorsBase::NotifyCohortActorCleanup(UFlowActorSpawnRecord& Record)
+{
+	OnBeforeCohortActorCleanup(Record);
+	HandleCleanupSpawnedInstance(Record);
+}
+
+void UFlowNode_FightActorsBase::NotifyActorDefeated(AActor& Actor)
+{
+	FLOW_ASSERT_ENUM_MAX(EFlowFightActorState, 4);
+	if (FightState == EFlowFightActorState::Executing)
+	{
+		TriggerOutput(OUTPIN_EachActorDefeated, false);
+	}
+
+	ReevaluateAfterDefeat();
+}
+
 void UFlowNode_FightActorsBase::StartSpawningPass()
 {
 	FLOW_ASSERT_ENUM_MAX(EFlowFightActorState, 4);
@@ -87,47 +156,23 @@ void UFlowNode_FightActorsBase::StartSpawningPass()
 	}
 }
 
-int32 UFlowNode_FightActorsBase::ExecuteReinforcementPass(EFlowFightActorSpawnMethod Method, bool bShuffleCohorts)
+void UFlowNode_FightActorsBase::DefeatAllSpawnedActors()
 {
-	FLOW_ASSERT_ENUM_MAX(EFlowFightActorState, 4);
-	if (FightState == EFlowFightActorState::Invalid || FightState == EFlowFightActorState::Complete)
-	{
-		return 0;
-	}
-
-	const int32 NumQueued = ExecuteFightPass(Method, bShuffleCohorts, false);
-	CompleteFightIfSpawnPassFailedOrEmpty(NumQueued, Method, false);
-
-	return NumQueued;
+	DefeatCohorts(true);
 }
 
-bool UFlowNode_FightActorsBase::CompleteFightIfSpawnPassFailedOrEmpty(
-	int32 NumQueued, EFlowFightActorSpawnMethod Method, bool bIsInitialPass)
+void UFlowNode_FightActorsBase::CleanupActorRecords()
 {
-	if (NumQueued < 0)
+	ForEachAddOnForClass<UFlowFightActorsCohort>([](UFlowNodeAddOn& AddOn)
 	{
-		const TCHAR* FailureMessage = bIsInitialPass
-			? TEXT("Fight spawning could not finish its pass. Remaining records are cancelled and the fight completes. ")
-				TEXT("Check cohort selectors and spawn-record configuration.")
-			: TEXT("Fight reinforcement could not finish its pass. Remaining records are cancelled and the fight completes. ")
-				TEXT("Check cohort selectors and spawn-record configuration.");
-		LogWarning(FailureMessage);
+		CastChecked<IFlowFightActorsCohort>(&AddOn)->CleanupActorRecords();
+		return EFlowForEachAddOnFunctionReturnValue::Continue;
+	});
+}
 
-		CompleteFightWithoutSpawning();
-
-		return true;
-	}
-
-	if (NumQueued == 0
-		&& EFlowFightActorSpawnMethod_Classifiers::IsAnySpawnMethod(Method)
-		&& GetFightActorCounts().GetAliveAndPendingCount() == 0)
-	{
-		CompleteFightWithoutSpawning();
-
-		return true;
-	}
-
-	return false;
+bool UFlowNode_FightActorsBase::HasAnyOutstandingSpawns() const
+{
+	return bPreparingFightPass || GetFightActorCounts().PendingSpawnCount > 0;
 }
 
 int32 UFlowNode_FightActorsBase::ExecuteFightPass(
@@ -191,37 +236,6 @@ int32 UFlowNode_FightActorsBase::ExecuteFightPass(
 	return NumQueued;
 }
 
-void UFlowNode_FightActorsBase::CompleteFightWithoutSpawning()
-{
-	FLOW_ASSERT_ENUM_MAX(EFlowFightActorState, 4);
-	if (FightState == EFlowFightActorState::Invalid || FightState == EFlowFightActorState::Complete)
-	{
-		return;
-	}
-
-	{
-		// AbortReinforcement and record cleanup can call back into completion; finish only after both settle.
-		TGuardValue<bool> CleanupGuard(bCleaningUpFight, true);
-		if (UFlowNodeAddOn_ReinforcementBase* Reinforcement = FindReinforcement())
-		{
-			Reinforcement->AbortReinforcement(true);
-		}
-
-		CleanupActorRecords();
-	}
-
-	TriggerOutput(OUTPIN_AllSpawnsCompleted.PinName, false);
-	if (FightState != EFlowFightActorState::Invalid && FightState != EFlowFightActorState::Complete)
-	{
-		SetFightState(EFlowFightActorState::Complete);
-	}
-}
-
-void UFlowNode_FightActorsBase::DefeatAllSpawnedActors()
-{
-	DefeatCohorts(true);
-}
-
 void UFlowNode_FightActorsBase::DefeatCohorts(bool bDisableAutoReinforcement)
 {
 	FLOW_ASSERT_ENUM_MAX(EFlowFightActorState, 4);
@@ -247,67 +261,6 @@ void UFlowNode_FightActorsBase::DefeatCohorts(bool bDisableAutoReinforcement)
 			CastChecked<IFlowFightActorsCohort>(AddOn)->DefeatSpawnedActors();
 		}
 	}
-}
-
-void UFlowNode_FightActorsBase::CleanupActorRecords()
-{
-	ForEachAddOnForClass<UFlowFightActorsCohort>([](UFlowNodeAddOn& AddOn)
-	{
-		CastChecked<IFlowFightActorsCohort>(&AddOn)->CleanupActorRecords();
-		return EFlowForEachAddOnFunctionReturnValue::Continue;
-	});
-}
-
-bool UFlowNode_FightActorsBase::HasAnyOutstandingSpawns() const
-{
-	return bPreparingFightPass || GetFightActorCounts().PendingSpawnCount > 0;
-}
-
-FFlowFightActorCounts UFlowNode_FightActorsBase::GetFightActorCounts() const
-{
-	FFlowFightActorCounts Counts;
-	ForEachAddOnForClassConst<UFlowFightActorsCohort>([&Counts](const UFlowNodeAddOn& AddOn)
-	{
-		CastChecked<IFlowFightActorsCohort>(&AddOn)->AppendActorCounts(Counts);
-		return EFlowForEachAddOnFunctionReturnValue::Continue;
-	});
-
-	return Counts;
-}
-
-float UFlowNode_FightActorsBase::GetOverallAliveUnitPercent() const
-{
-	return GetFightActorCounts().CalculateAliveAndPendingVsInitialCountUnitPercent();
-}
-
-UFlowNodeAddOn_ReinforcementBase* UFlowNode_FightActorsBase::FindReinforcement() const
-{
-	for (UFlowNodeAddOn* AddOn : GetFlowNodeAddOnChildren())
-	{
-		if (UFlowNodeAddOn_ReinforcementBase* Reinforcement = Cast<UFlowNodeAddOn_ReinforcementBase>(AddOn))
-		{
-			return Reinforcement;
-		}
-	}
-
-	return nullptr;
-}
-
-void UFlowNode_FightActorsBase::ReevaluateFightCompletion()
-{
-	FLOW_ASSERT_ENUM_MAX(EFlowFightActorState, 4);
-	if (FightState != EFlowFightActorState::Executing || bPreparingFightPass || bCleaningUpFight)
-	{
-		return;
-	}
-
-	SetFightState(EFlowFightActorState::CheckCompletion);
-	UpdateFightState();
-}
-
-void UFlowNode_FightActorsBase::ReevaluateAfterDefeat()
-{
-	ReevaluateFightCompletion();
 }
 
 void UFlowNode_FightActorsBase::SetFightState(EFlowFightActorState NextState)
@@ -400,42 +353,89 @@ void UFlowNode_FightActorsBase::UpdateFightState()
 	}
 }
 
-void UFlowNode_FightActorsBase::NotifyCohortPreSpawn(UFlowActorSpawnRecord& Record)
+void UFlowNode_FightActorsBase::ReevaluateAfterDefeat()
 {
-	HandlePreSpawnConfiguration(Record);
+	ReevaluateFightCompletion();
 }
 
-void UFlowNode_FightActorsBase::NotifyCohortPreFinishSpawn(UFlowActorSpawnRecord& Record)
-{
-	HandlePreFinishSpawnActor(Record);
-}
-
-void UFlowNode_FightActorsBase::NotifyCohortPostSpawn(UFlowActorSpawnRecord& Record)
-{
-	HandlePostSpawnConfiguration(Record);
-	OnCohortActorSpawned(Record);
-}
-
-void UFlowNode_FightActorsBase::NotifyCohortSpawnAttemptFinished(UFlowActorSpawnRecord& Record)
-{
-	HandleFinishedSpawnAttempt(Record);
-}
-
-void UFlowNode_FightActorsBase::NotifyCohortActorCleanup(UFlowActorSpawnRecord& Record)
-{
-	OnBeforeCohortActorCleanup(Record);
-	HandleCleanupSpawnedInstance(Record);
-}
-
-void UFlowNode_FightActorsBase::NotifyActorDefeated(AActor& Actor)
+void UFlowNode_FightActorsBase::CompleteFightWithoutSpawning()
 {
 	FLOW_ASSERT_ENUM_MAX(EFlowFightActorState, 4);
-	if (FightState == EFlowFightActorState::Executing)
+	if (FightState == EFlowFightActorState::Invalid || FightState == EFlowFightActorState::Complete)
 	{
-		TriggerOutput(OUTPIN_EachActorDefeated, false);
+		return;
 	}
 
-	ReevaluateAfterDefeat();
+	{
+		// AbortReinforcement and record cleanup can call back into completion; finish only after both settle.
+		TGuardValue<bool> CleanupGuard(bCleaningUpFight, true);
+		if (UFlowNodeAddOn_ReinforcementBase* Reinforcement = FindReinforcement())
+		{
+			Reinforcement->AbortReinforcement(true);
+		}
+
+		CleanupActorRecords();
+	}
+
+	TriggerOutput(OUTPIN_AllSpawnsCompleted.PinName, false);
+	if (FightState != EFlowFightActorState::Invalid && FightState != EFlowFightActorState::Complete)
+	{
+		SetFightState(EFlowFightActorState::Complete);
+	}
+}
+
+bool UFlowNode_FightActorsBase::CompleteFightIfSpawnPassFailedOrEmpty(
+	int32 NumQueued, EFlowFightActorSpawnMethod Method, bool bIsInitialPass)
+{
+	if (NumQueued < 0)
+	{
+		const TCHAR* FailureMessage = bIsInitialPass
+			? TEXT("Fight spawning could not finish its pass. Remaining records are cancelled and the fight completes. ")
+				TEXT("Check cohort selectors and spawn-record configuration.")
+			: TEXT("Fight reinforcement could not finish its pass. Remaining records are cancelled and the fight completes. ")
+				TEXT("Check cohort selectors and spawn-record configuration.");
+		LogWarning(FailureMessage);
+
+		CompleteFightWithoutSpawning();
+
+		return true;
+	}
+
+	if (NumQueued == 0
+		&& EFlowFightActorSpawnMethod_Classifiers::IsAnySpawnMethod(Method)
+		&& GetFightActorCounts().GetAliveAndPendingCount() == 0)
+	{
+		CompleteFightWithoutSpawning();
+
+		return true;
+	}
+
+	return false;
+}
+
+FFlowFightActorCounts UFlowNode_FightActorsBase::GetFightActorCounts() const
+{
+	FFlowFightActorCounts Counts;
+	ForEachAddOnForClassConst<UFlowFightActorsCohort>([&Counts](const UFlowNodeAddOn& AddOn)
+	{
+		CastChecked<IFlowFightActorsCohort>(&AddOn)->AppendActorCounts(Counts);
+		return EFlowForEachAddOnFunctionReturnValue::Continue;
+	});
+
+	return Counts;
+}
+
+UFlowNodeAddOn_ReinforcementBase* UFlowNode_FightActorsBase::FindReinforcement() const
+{
+	for (UFlowNodeAddOn* AddOn : GetFlowNodeAddOnChildren())
+	{
+		if (UFlowNodeAddOn_ReinforcementBase* Reinforcement = Cast<UFlowNodeAddOn_ReinforcementBase>(AddOn))
+		{
+			return Reinforcement;
+		}
+	}
+
+	return nullptr;
 }
 
 bool UFlowNode_FightActorsBase::ShouldCheckCompletionAfterPass(bool bQueuedAnyRecords) const

@@ -81,11 +81,6 @@ void UFlowNodeAddOn_FightActorsCohortBase::CleanupActorRecords()
 	ActorRecords.Empty();
 }
 
-int32 UFlowNodeAddOn_FightActorsCohortBase::GetInitialActorCount() const
-{
-	return 0;
-}
-
 AActor* UFlowNodeAddOn_FightActorsCohortBase::TryGetActorOwner() const
 {
 	return TryGetRootFlowActorOwner();
@@ -129,6 +124,11 @@ void UFlowNodeAddOn_FightActorsCohortBase::OnCleanupSpawnedInstance(UFlowActorSp
 	{
 		Fight->NotifyCohortActorCleanup(Record);
 	}
+}
+
+int32 UFlowNodeAddOn_FightActorsCohortBase::GetInitialActorCount() const
+{
+	return 0;
 }
 #endif
 

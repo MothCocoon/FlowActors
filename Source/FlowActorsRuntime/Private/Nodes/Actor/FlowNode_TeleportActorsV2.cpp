@@ -145,6 +145,58 @@ void UFlowNode_TeleportActorsV2::DeinitializeInstance()
 	Super::DeinitializeInstance();
 }
 
+void UFlowNode_TeleportActorsV2::CompleteTeleportOperation(
+	const FGuid& InActivationGuid,
+	const FGuid& OperationGuid,
+	const bool bSucceeded,
+	const EFlowTeleportFailureReason FailureReason)
+{
+	FLOW_ASSERT_ENUM_MAX(EFlowTeleportState, 3);
+	if (InActivationGuid != Activation.Guid || !Activation.PendingActors.Contains(OperationGuid))
+	{
+		return;
+	}
+
+	checkf(
+		EFlowTeleportState_Classifiers::IsOperationInProgressState(State),
+		TEXT("A valid teleport operation may only complete while the activation is Starting or WaitingForOperations."));
+
+	AActor* Actor = Activation.PendingActors.FindRef(OperationGuid);
+	Activation.PendingActors.Remove(OperationGuid);
+	if (IsValid(Actor))
+	{
+		CurrentTeleportActor = Actor;
+		TeleportFailureReason = bSucceeded ? EFlowTeleportFailureReason::None : FailureReason;
+
+		if (bSucceeded)
+		{
+			TeleportedActors.Add(Actor);
+
+			constexpr bool bFinish = false;
+			TriggerOutput(OUTPIN_TeleportSucceeded, bFinish);
+		}
+		else
+		{
+			Activation.bAllTeleportsSucceeded = false;
+
+			constexpr bool bFinish = false;
+			TriggerOutput(OUTPIN_TeleportFailed, bFinish);
+		}
+	}
+	else
+	{
+		Activation.bAllTeleportsSucceeded = false;
+	}
+
+	if (Activation.PendingActors.IsEmpty() && State == EFlowTeleportState::WaitingForOperations)
+	{
+		checkf(
+			State == EFlowTeleportState::WaitingForOperations,
+			TEXT("Teleport completion may only transition to Completed from WaitingForOperations."));
+		SetState(EFlowTeleportState::Completed);
+	}
+}
+
 void UFlowNode_TeleportActorsV2::TeleportActors()
 {
 	FLOW_ASSERT_ENUM_MAX(EFlowTeleportState, 3);
@@ -338,58 +390,6 @@ void UFlowNode_TeleportActorsV2::TriggerCompletion()
 	}
 
 	TriggerOutput(OUTPIN_AllTeleportAttemptsComplete, true);
-}
-
-void UFlowNode_TeleportActorsV2::CompleteTeleportOperation(
-	const FGuid& InActivationGuid,
-	const FGuid& OperationGuid,
-	const bool bSucceeded,
-	const EFlowTeleportFailureReason FailureReason)
-{
-	FLOW_ASSERT_ENUM_MAX(EFlowTeleportState, 3);
-	if (InActivationGuid != Activation.Guid || !Activation.PendingActors.Contains(OperationGuid))
-	{
-		return;
-	}
-
-	checkf(
-		EFlowTeleportState_Classifiers::IsOperationInProgressState(State),
-		TEXT("A valid teleport operation may only complete while the activation is Starting or WaitingForOperations."));
-
-	AActor* Actor = Activation.PendingActors.FindRef(OperationGuid);
-	Activation.PendingActors.Remove(OperationGuid);
-	if (IsValid(Actor))
-	{
-		CurrentTeleportActor = Actor;
-		TeleportFailureReason = bSucceeded ? EFlowTeleportFailureReason::None : FailureReason;
-
-		if (bSucceeded)
-		{
-			TeleportedActors.Add(Actor);
-
-			constexpr bool bFinish = false;
-			TriggerOutput(OUTPIN_TeleportSucceeded, bFinish);
-		}
-		else
-		{
-			Activation.bAllTeleportsSucceeded = false;
-
-			constexpr bool bFinish = false;
-			TriggerOutput(OUTPIN_TeleportFailed, bFinish);
-		}
-	}
-	else
-	{
-		Activation.bAllTeleportsSucceeded = false;
-	}
-
-	if (Activation.PendingActors.IsEmpty() && State == EFlowTeleportState::WaitingForOperations)
-	{
-		checkf(
-			State == EFlowTeleportState::WaitingForOperations,
-			TEXT("Teleport completion may only transition to Completed from WaitingForOperations."));
-		SetState(EFlowTeleportState::Completed);
-	}
 }
 
 void UFlowNode_TeleportActorsV2::CancelTeleportExecutionAddOn()
